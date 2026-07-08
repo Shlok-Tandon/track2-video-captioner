@@ -10,15 +10,26 @@ import re
 
 from .fireworks_client import chat, b64_image
 
-# Confirm the exact hosted IDs on Discord at launch, then update these.
-# They are env-overridable so you can A/B a fine-tuned model without editing code:
-#   set RESTYLE_MODEL=accounts/<you>/models/<your-finetune>  and re-run.
+# Confirmed available on this Fireworks account as of today (no Gemma yet -
+# swap in the real Gemma ID here the moment Discord announces it).
+#   kimi-k2p6 / kimi-k2p5 : chat + image input  -> used for the vision step
+#   gpt-oss-120b          : chat, reasoning model -> used for the text step
 DESCRIBE_MODEL = os.environ.get(
-    "DESCRIBE_MODEL", "accounts/fireworks/models/<gemma-vision-id>")
+    "DESCRIBE_MODEL", "accounts/fireworks/models/kimi-k2p6")
 RESTYLE_MODEL = os.environ.get(
-    "RESTYLE_MODEL", "accounts/fireworks/models/<gemma-text-id>")
+    "RESTYLE_MODEL", "accounts/fireworks/models/gpt-oss-120b")
 FALLBACK_MODEL = os.environ.get(
-    "FALLBACK_MODEL", "accounts/fireworks/models/<non-gemma-backup-id>")
+    "FALLBACK_MODEL", "accounts/fireworks/models/kimi-k2p5")
+
+# Most currently-available models are reasoning-tuned and "think out loud"
+# before answering. This system message + reasoning_effort="low" (Section
+# below) keep that under control; _extract_json() below is also defensive
+# in case some reasoning text still slips in around the JSON.
+NO_REASONING_SYSTEM = (
+    "Answer directly and concisely. Do not show your reasoning, do not "
+    "think step by step out loud, and do not add any preamble or "
+    "explanation - output only the final answer requested."
+)
 
 STYLE_DEFINITIONS = {
     "formal": "professional, objective, factual tone",
@@ -36,7 +47,6 @@ SAFE_FALLBACK = {
 
 
 def _extract_json(raw: str) -> dict:
-    """Tolerate markdown fences and prose around the JSON object."""
     raw = re.sub(r"```(?:json)?", "", raw).strip()
     start, end = raw.find("{"), raw.rfind("}")
     if start == -1 or end == -1:
@@ -47,19 +57,32 @@ def _extract_json(raw: str) -> dict:
         return {}
 
 
+def _clean_text(raw: str) -> str:
+    raw = raw.strip()
+    for marker in ("Final answer:", "Answer:", "Description:"):
+        if marker in raw:
+            raw = raw.split(marker)[-1].strip()
+    return raw
+
+
 def describe_scene(frame_paths: list) -> str:
     content = [{"type": "text", "text": (
         "Describe factually and neutrally what is happening in this video, "
         "based on these sampled frames in order. Cover setting, subjects and "
-        "key actions in 2-4 sentences. No opinion, no tone, no speculation.")}]
+        "key actions in 2-4 sentences. No opinion, no tone, no speculation. "
+        "Output ONLY the description itself.")}]
     for fp in frame_paths:
         content.append({"type": "image_url", "image_url": {
             "url": f"data:image/jpeg;base64,{b64_image(fp)}"}})
-    messages = [{"role": "user", "content": content}]
+    messages = [
+        {"role": "system", "content": NO_REASONING_SYSTEM},
+        {"role": "user", "content": content},
+    ]
     try:
-        return chat(DESCRIBE_MODEL, messages)
+        raw = chat(DESCRIBE_MODEL, messages, max_tokens=350, reasoning_effort="low")
     except Exception:
-        return chat(FALLBACK_MODEL, messages)
+        raw = chat(FALLBACK_MODEL, messages, max_tokens=350, reasoning_effort="low")
+    return _clean_text(raw)
 
 
 def restyle(description: str, requested_styles: list) -> dict:
@@ -71,11 +94,16 @@ def restyle(description: str, requested_styles: list) -> dict:
         f"description.\n\nDescription: \"{description}\"\n\n"
         f"Styles:\n{style_lines}\n\n"
         "Return ONLY a JSON object with exactly these keys: "
-        f"{requested_styles}. No markdown fences, no extra text.")
-    messages = [{"role": "user", "content": prompt}]
-    for model in (RESTYLE_MODEL, FALLBACK_MODEL):  # retry on the other model
+        f"{requested_styles}. No markdown fences, no extra text, "
+        "no reasoning - the JSON object must be your entire response.")
+    messages = [
+        {"role": "system", "content": NO_REASONING_SYSTEM},
+        {"role": "user", "content": prompt},
+    ]
+    for model in (RESTYLE_MODEL, FALLBACK_MODEL):
         try:
-            parsed = _extract_json(chat(model, messages))
+            raw = chat(model, messages, max_tokens=700, reasoning_effort="low")
+            parsed = _extract_json(raw)
             if parsed:
                 return parsed
         except Exception:
@@ -86,7 +114,7 @@ def restyle(description: str, requested_styles: list) -> dict:
 def caption_clip(frame_paths: list, requested_styles: list) -> dict:
     description = describe_scene(frame_paths)
     captions = restyle(description, requested_styles)
-    for style in requested_styles:  # guarantee every requested key exists
+    for style in requested_styles:
         val = captions.get(style)
         if not isinstance(val, str) or not val.strip():
             captions[style] = SAFE_FALLBACK.get(style, "A short video clip.")

@@ -13,20 +13,24 @@ def b64_image(path: str) -> str:
 
 
 def chat(model: str, messages: list,
-         timeout: int = 25, max_tokens: int = 500) -> str:
-    """Call chat-completions and return the assistant text. One retry."""
+         timeout: int = 30, max_tokens: int = 500,
+         reasoning_effort: str = None) -> str:
+    payload = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": 0.6,
+    }
+    if reasoning_effort:
+        payload["reasoning_effort"] = reasoning_effort
+
     last_err = None
     for attempt in range(2):
         try:
             resp = requests.post(
                 f"{BASE_URL}/chat/completions",
                 headers={"Authorization": f"Bearer {get_api_key()}"},
-                json={
-                    "model": model,
-                    "messages": messages,
-                    "max_tokens": max_tokens,
-                    "temperature": 0.6,
-                },
+                json=payload,
                 timeout=timeout,
             )
             resp.raise_for_status()
