@@ -79,9 +79,9 @@ def describe_scene(frame_paths: list) -> str:
         {"role": "user", "content": content},
     ]
     try:
-        raw = chat(DESCRIBE_MODEL, messages, max_tokens=350, reasoning_effort="low")
+        raw = chat(DESCRIBE_MODEL, messages, max_tokens=600, reasoning_effort="low")
     except Exception:
-        raw = chat(FALLBACK_MODEL, messages, max_tokens=350, reasoning_effort="low")
+        raw = chat(FALLBACK_MODEL, messages, max_tokens=600, reasoning_effort="low")
     return _clean_text(raw)
 
 
@@ -102,7 +102,7 @@ def restyle(description: str, requested_styles: list) -> dict:
     ]
     for model in (RESTYLE_MODEL, FALLBACK_MODEL):
         try:
-            raw = chat(model, messages, max_tokens=700, reasoning_effort="low")
+            raw = chat(model, messages, max_tokens=900, reasoning_effort="low")
             parsed = _extract_json(raw)
             if parsed:
                 return parsed
