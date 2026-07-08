@@ -1,0 +1,8 @@
+# HOW TO USE:
+#   1. Copy this file to  src/embedded_key.py
+#   2. Paste your real Fireworks key between the quotes below.
+#
+# src/embedded_key.py is GITIGNORED and must NEVER be committed to the public repo.
+# It IS copied into the Docker image on purpose (the judge runs the container with
+# no environment variables, so the key must live inside the image).
+EMBEDDED_FIREWORKS_KEY = "fw-paste-your-real-key-here"

@@ -1,0 +1,12 @@
+# secrets - NEVER commit these
+.env
+src/embedded_key.py
+
+# python
+venv/
+__pycache__/
+*.pyc
+
+# local test artifacts + downloaded clips (keep the repo light)
+test_output/
+clips/

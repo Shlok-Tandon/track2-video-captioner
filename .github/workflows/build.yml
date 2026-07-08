@@ -1,0 +1,81 @@
+# Builds the linux/amd64 image, smoke-tests it the way the judge will, and pushes
+# it to GHCR - entirely in the cloud. This is what lets you skip Docker on your
+# laptop AND on the (Docker-incapable) hackathon notebook completely.
+#
+# ONE-TIME SETUP before this works:
+#   Repo -> Settings -> Secrets and variables -> Actions -> New repository secret
+#     Name:  FIREWORKS_API_KEY
+#     Value: your real Fireworks key (fw-...)
+#
+# After the first successful run, make the package public once:
+#   Your GitHub profile -> Packages -> track2-captioner -> Package settings
+#     -> Change visibility -> Public
+name: build-test-push
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:      # also lets you trigger it by hand from the Actions tab
+
+jobs:
+  build-test-push:
+    runs-on: ubuntu-latest      # GitHub runners are already linux/amd64
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lowercase the repo owner (GHCR requires lowercase)
+        id: vars
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Bake the Fireworks key into the build (from a secret, never the repo)
+        run: echo "EMBEDDED_FIREWORKS_KEY = \"${{ secrets.FIREWORKS_API_KEY }}\"" > src/embedded_key.py
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build the linux/amd64 image (load into the runner for testing)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: track2-captioner:ci
+
+      # Judge-realistic smoke test: no env vars, only /input and /output mounted.
+      # NOTE: this makes REAL Fireworks calls (uses a little credit). To save
+      # credits while iterating, comment this whole step out and keep it only for
+      # final validation, or trim test_input/tasks.json down to a single clip.
+      - name: Smoke test the image the way the judge will
+        run: |
+          mkdir -p out
+          docker run --rm \
+            -v "${{ github.workspace }}/test_input:/input" \
+            -v "${{ github.workspace }}/out:/output" \
+            track2-captioner:ci
+          echo "----- results.json -----"
+          cat out/results.json
+          python3 - <<'PY'
+          import json
+          data = json.load(open("out/results.json"))
+          need = {"formal", "sarcastic", "humorous_tech", "humorous_non_tech"}
+          for r in data:
+              caps = r.get("captions", {})
+              missing = [s for s in need if not caps.get(s)]
+              assert not missing, f"task {r.get('task_id')} missing/empty: {missing}"
+          print("SMOKE TEST PASSED: every task has all four non-empty styles.")
+          PY
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag and push to GHCR
+        run: |
+          docker tag track2-captioner:ci ghcr.io/${{ steps.vars.outputs.owner }}/track2-captioner:latest
+          docker push ghcr.io/${{ steps.vars.outputs.owner }}/track2-captioner:latest

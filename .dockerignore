@@ -1,0 +1,11 @@
+.env
+.git
+venv/
+__pycache__/
+*.pyc
+test_input/
+test_output/
+docs/
+clips/
+test_local.py
+.github/
