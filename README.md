@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Track 2 Video Captioning Agent — [Team Name]
 
 An AI agent that watches a short video clip and writes a caption in four styles
@@ -58,3 +59,6 @@ Output `/output/results.json`: list of `{task_id, captions{style: text}}`.
 
 ## License
 MIT
+=======
+# track2-video-captioner
+>>>>>>> 7c4162a2b24c3b50afd6d38fdc58a40af8822b91
