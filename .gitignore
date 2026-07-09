@@ -10,3 +10,5 @@ __pycache__/
 # local test artifacts + downloaded clips (keep the repo light)
 test_output/
 clips/
+
+test_input/tasks_full.json
