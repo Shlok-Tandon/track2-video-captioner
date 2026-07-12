@@ -1,4 +1,3 @@
-@'
 """Two-stage captioning: describe the video, then restyle into 4 tones.
 
 Stage A (describe) targets the judge's ACCURACY axis.
@@ -26,8 +25,11 @@ NO_REASONING_SYSTEM = (
 
 STYLE_DEFINITIONS = {
     "formal": (
-        "professional, objective, factual tone; one complete grammatical "
-        "sentence, up to 30 words; no humour, no opinion"),
+        "professional, objective, factual tone; 1-2 complete sentences "
+        "covering the main subjects, their key visible details, and the "
+        "core action, plus any clearly identifiable place or brand name; "
+        "specific and concrete, but concise - do not exhaustively list "
+        "every object in the scene; no humour, no opinion"),
     "sarcastic": (
         "dry, ironic, lightly mocking; ONE short punchy sentence, ideally "
         "under 20 words - a single clean jab, not an explanation; still "
@@ -68,11 +70,45 @@ def _extract_json(raw: str) -> dict:
         return {}
 
 
+_REASONING_CUES = (
+    "the user wants", "let me draft", "let me analyze", "let me check",
+    "let me reconsider", "wait, let me", "i need to", "i should",
+    "constraints:", "actually,", "hmm,",
+)
+
+
+def _looks_like_reasoning(text: str) -> bool:
+    low = text.lower()
+    hits = sum(1 for cue in _REASONING_CUES if cue in low)
+    numbered_list = bool(re.search(r"(?:^|\n)\s*[1-4][.)]\s", text))
+    return hits >= 2 or (hits >= 1 and numbered_list)
+
+
+def _best_paragraph(text: str) -> str:
+    candidates = re.split(r"\n\s*\n|\n", text)
+    best = ""
+    for c in candidates:
+        c = c.strip().lstrip("-* ").strip()
+        if len(c) < 40 or _looks_like_reasoning(c):
+            continue
+        if not _SENTENCE_END.search(c):
+            continue
+        if len(c) > len(best):
+            best = c
+    return best
+
+
 def _clean_text(raw: str) -> str:
     raw = raw.strip()
-    for marker in ("Final answer:", "Answer:", "Description:"):
+    for marker in ("Final answer:", "Answer:", "Description:", "Let me draft:"):
         if marker in raw:
-            raw = raw.split(marker)[-1].strip()
+            after = raw.split(marker, 1)[-1].strip()
+            first_chunk = re.split(r"\n\s*\n", after)[0].strip()
+            if first_chunk and not _looks_like_reasoning(first_chunk):
+                raw = first_chunk
+                break
+    if _looks_like_reasoning(raw):
+        raw = _best_paragraph(raw)
     return raw
 
 
@@ -95,8 +131,9 @@ def describe_scene(frame_paths: list) -> str:
         "based on these sampled frames in order. Cover the setting, the "
         "main subjects, their appearance, and the key actions or motion "
         "across the frames, in 2-4 complete sentences. Mention colours and "
-        "notable objects, and use ONE consistent, specific, precise term "
-        "for each object you name - never call the same object by two "
+        "notable objects, plus any clearly readable text, signage, or "
+        "brand name. Use ONE consistent, specific, precise term for each "
+        "object you name - never call the same object by two "
         "different names within the description if it could be described "
         "more than one way. If a recognizable city, landmark, or specific "
         "location is clearly identifiable from the visuals, name it "
@@ -114,10 +151,14 @@ def describe_scene(frame_paths: list) -> str:
     try:
         raw = chat(DESCRIBE_MODEL, messages, max_tokens=600,
                    reasoning_effort="low")
+        cleaned = _clean_text(raw)
+        if not cleaned:
+            raise ValueError("describe: could not recover a clean answer")
     except Exception:
         raw = chat(FALLBACK_MODEL, messages, max_tokens=600,
                    reasoning_effort="low")
-    return _trim_to_complete_sentence(_clean_text(raw))
+        cleaned = _clean_text(raw)
+    return _trim_to_complete_sentence(cleaned)
 
 
 def _valid_captions(parsed: dict, requested_styles: list) -> bool:
@@ -182,4 +223,3 @@ def caption_clip(frame_paths: list, requested_styles: list) -> dict:
         else:
             captions[style] = _trim_to_complete_sentence(val.strip())
     return {s: captions[s] for s in requested_styles}
-'@ | Set-Content -Path src\pipeline.py -Encoding utf8
